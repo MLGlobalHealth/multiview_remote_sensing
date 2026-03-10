@@ -21,6 +21,31 @@ Ytr = read.csv(paste0(data_path,'Y_train.csv'))
 Xts = read.csv(paste0(data_path,'X_test.csv'))
 Yts = read.csv(paste0(data_path,'Y_test.csv'))
 
+
+Ytr = read_csv("~/Downloads/train_df.csv")
+nrow(Xtr)
+Xtr = read_csv("~/Downloads/train_features.csv")
+nrow(Ytr)
+
+sum(is.na(Ytr$deprived_sev))
+
+library(rstanarm)
+options(mc.cores = parallel::detectCores())
+
+n = rpois(length(Ytr$deprived_sev),10)
+k = as.integer(Ytr$deprived_sev * n)
+
+fit <- stan_glm(
+  cbind(k, n - k) ~ .,
+  data = Xtr,
+  prior = normal(0, .1),
+  family = binomial(link = "logit"),
+  chains = 4,
+  iter = 200
+)
+saveRDS(fit,"/tmp/test.rds")
+a=predict(Xtr[sample(nrow(Xtr)),])
+
 # Set-up stan
 stanfile = here(paste0(model_name,'.stan'))
 mod = cmdstan_model(stanfile)
