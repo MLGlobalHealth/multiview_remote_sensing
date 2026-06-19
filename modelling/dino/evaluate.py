@@ -17,23 +17,36 @@ warnings.filterwarnings("ignore")
 import pandas as pd
 from tqdm import tqdm
 
-def evaluate(fold, model_name, target = "", use_checkpoint = False, model_not_named_target = True, imagery_path = None, imagery_source = None, mode = 'temporal', model_output_dim = 768, grouped_bands = None):
+def evaluate(fold, model_name, target = "", use_checkpoint = False, model_not_named_target = True, imagery_path = None, imagery_source = None, mode = 'temporal', model_output_dim = 768, grouped_bands = None, checkpoint_path = None):
     model_par_dir = r'modelling/dino/model/'
 
-    
+
     if use_checkpoint:
-        if model_not_named_target:
+        # An explicit --checkpoint wins over the constructed name; the released
+        # checkpoints (e.g. dinov2_vitb14_1_all_cluster_best_S.pth) don't follow
+        # the grouped-bands naming this function would otherwise build.
+        if checkpoint_path is not None:
+            checkpoint = checkpoint_path
+        elif model_not_named_target:
             named_target = target
+            if mode == 'temporal':
+                checkpoint = f'{model_par_dir}{model_name}_temporal_best_{imagery_source}{named_target}_.pth'
+            elif mode == 'spatial':
+                checkpoint = f'{model_par_dir}{model_name}_{fold}_{grouped_bands}all_cluster_best_{imagery_source}{named_target}_.pth'
+            elif mode == 'one_country':
+                checkpoint = f'{model_par_dir}{model_name}_{fold}_one_country_best_{imagery_source}{named_target}_.pth'
+            else:
+                raise Exception(mode)
         else:
             named_target = ''
-        if mode == 'temporal':
-            checkpoint = f'{model_par_dir}{model_name}_temporal_best_{imagery_source}{named_target}_.pth'
-        elif mode == 'spatial':
-            checkpoint = f'{model_par_dir}{model_name}_{fold}_{grouped_bands}all_cluster_best_{imagery_source}{named_target}_.pth'
-        elif mode == 'one_country':
-            checkpoint = f'{model_par_dir}{model_name}_{fold}_one_country_best_{imagery_source}{named_target}_.pth'
-        else:
-            raise Exception(mode)
+            if mode == 'temporal':
+                checkpoint = f'{model_par_dir}{model_name}_temporal_best_{imagery_source}{named_target}_.pth'
+            elif mode == 'spatial':
+                checkpoint = f'{model_par_dir}{model_name}_{fold}_{grouped_bands}all_cluster_best_{imagery_source}{named_target}_.pth'
+            elif mode == 'one_country':
+                checkpoint = f'{model_par_dir}{model_name}_{fold}_one_country_best_{imagery_source}{named_target}_.pth'
+            else:
+                raise Exception(mode)
         
 
     print(f"Evaluating {model_name} on fold {fold} with target {target} using checkpoint {checkpoint}")
@@ -138,7 +151,9 @@ def evaluate(fold, model_name, target = "", use_checkpoint = False, model_not_na
             return self.base_model(pixel_values)
     model = ViTForRegression(base_model)
     if use_checkpoint:
-        state_dict = torch.load(checkpoint)
+        # weights_only=False: torch>=2.6 defaults to True, which rejects the
+        # optimizer state stored in these (trusted, self-produced) checkpoints.
+        state_dict = torch.load(checkpoint, map_location=device, weights_only=False)
         model.load_state_dict(state_dict['model_state_dict'])
 
     class CustomDataset(Dataset):
@@ -209,6 +224,17 @@ def evaluate(fold, model_name, target = "", use_checkpoint = False, model_not_na
     df_X_test = pd.DataFrame(X_test)
     df_y_test = pd.DataFrame(y_test, columns=['target'])
 
+    # Attach CENTROID_ID and the binomial counts so the Bayesian model can use
+    # real cluster sample sizes. The loaders use shuffle=False, so row i of the
+    # feature/target arrays is row i of the (already filtered) dataframe.
+    meta_cols = ['CENTROID_ID', 'COUNTRY', 'YEAR',
+                 'deprived_sev', 'deprived_sev_k', 'deprived_sev_n',
+                 'deprived_mod', 'deprived_mod_k', 'deprived_mod_n']
+    for c in meta_cols:
+        if c in train_df.columns:
+            df_y_train[c] = train_df[c].reset_index(drop=True)
+            df_y_test[c] = test_df[c].reset_index(drop=True)
+
     results_folder = f'modelling/dino/results/split_{mode}{imagery_source}_{fold}_{grouped_bands}/'
     if not os.path.exists(results_folder):
         os.makedirs(results_folder)
@@ -257,15 +283,17 @@ if __name__ == '__main__':
     parser.add_argument('--use_checkpoint', action='store_true', help='Whether to use checkpoint file. If not, use raw model.')
     parser.add_argument('--model_not_named_target', action='store_false', help='Whether the model name contains the target variable')
     parser.add_argument('--grouped_bands', nargs='+', type=int, help="List of grouped bands")
-    
+    parser.add_argument('--checkpoint', type=str, default=None, help="Explicit checkpoint path (overrides the constructed name). For spatial mode use {fold} as a placeholder, e.g. /path/dinov2_vitb14_{fold}_all_cluster_best_S.pth")
+    parser.add_argument('--folds', nargs='+', type=int, default=[1, 2, 3, 4, 5], help="Which spatial folds to run (default all 5)")
+
     args = parser.parse_args()
     maes = []
     if args.mode == 'temporal':
-        print(evaluate("1", args.model_name,args.target, args.use_checkpoint,args.model_not_named_target, args.imagery_path, args.imagery_source, args.mode,  args.model_output_dim))
+        print(evaluate("1", args.model_name,args.target, args.use_checkpoint,args.model_not_named_target, args.imagery_path, args.imagery_source, args.mode,  args.model_output_dim, checkpoint_path=args.checkpoint))
     elif args.mode == 'spatial':
-        for i in range(5):
-            fold = i + 1
-            mae = evaluate(str(fold), args.model_name, args.target, args.use_checkpoint,args.model_not_named_target,args.imagery_path, args.imagery_source, args.mode, args.model_output_dim, grouped_bands=args.grouped_bands)
+        for fold in args.folds:
+            ckpt = args.checkpoint.format(fold=fold) if args.checkpoint else None
+            mae = evaluate(str(fold), args.model_name, args.target, args.use_checkpoint,args.model_not_named_target,args.imagery_path, args.imagery_source, args.mode, args.model_output_dim, grouped_bands=args.grouped_bands, checkpoint_path=ckpt)
             maes.append(mae)
         print(np.mean(maes), np.std(maes)/np.sqrt(5))
     elif args.mode == 'one_country':

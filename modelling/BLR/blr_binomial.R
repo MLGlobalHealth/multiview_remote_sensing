@@ -32,10 +32,18 @@ dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 k_col <- paste0(prefix, "_k")
 n_col <- paste0(prefix, "_n")
 
-Xtr <- as.matrix(read_csv(file.path(data_dir, "X_train.csv"), show_col_types = FALSE))
-Xts <- as.matrix(read_csv(file.path(data_dir, "X_test.csv"),  show_col_types = FALSE))
-Ytr <- read_csv(file.path(data_dir, "Y_train.csv"), show_col_types = FALSE)
-Yts <- read_csv(file.path(data_dir, "Y_test.csv"),  show_col_types = FALSE)
+# Tolerate either the SatMAE prep output (X_train.csv / Y_train.csv) or the DINO
+# evaluate.py output (X_train.csv / y_train.csv, lowercase). The feature matrix
+# width is read from the file, so 768-dim DINO and 1024-dim SatMAE both work.
+read_first <- function(dir, candidates) {
+  for (f in candidates) if (file.exists(file.path(dir, f)))
+    return(read_csv(file.path(dir, f), show_col_types = FALSE))
+  stop(sprintf("none of {%s} found in %s", paste(candidates, collapse=", "), dir))
+}
+Xtr <- as.matrix(read_first(data_dir, c("X_train.csv")))
+Xts <- as.matrix(read_first(data_dir, c("X_test.csv")))
+Ytr <- read_first(data_dir, c("Y_train.csv", "y_train.csv"))
+Yts <- read_first(data_dir, c("Y_test.csv",  "y_test.csv"))
 
 # Drop clusters with no valid denominator (n missing or 0) — these are exactly the
 # rows the old code papered over with a fake Poisson n.
