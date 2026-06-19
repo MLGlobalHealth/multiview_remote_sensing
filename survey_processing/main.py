@@ -914,8 +914,23 @@ def agg_pov_dfs(pov_dfs):
         ccode = df.loc[0, 'countrycode']
         year = str(df.loc[0, "year"])
 
-        # group by averaging over cluster
+        # group by averaging over cluster (this mean is the prevalence p = k/n)
         df_agg = df.select_dtypes(include=[np.number]).groupby('cluster').agg('mean').reset_index()
+
+        # also carry through the raw binomial counts for the headline poverty
+        # targets so a binomial model can use the real cluster sample size:
+        #   _k = number of deprived children (sum of the 0/1 indicator)
+        #   _n = number of children with a non-missing indicator (denominator)
+        # The prevalence column above equals _k / _n. Without _n a Gaussian model
+        # on the prevalence alone cannot distinguish p=0.5 from n=2 vs n=200.
+        for tgt in ['deprived_sev', 'deprived_mod']:
+            if tgt in df.columns:
+                g = df.groupby('cluster')[tgt]
+                counts = pd.DataFrame({
+                    f'{tgt}_k': g.sum(min_count=1),  # NaN if every child in the cluster is missing
+                    f'{tgt}_n': g.count(),           # non-missing count
+                }).reset_index()
+                df_agg = df_agg.merge(counts, on='cluster', how='left')
 
         # add id column so we can join to DHS data and GPS data later
         df_agg['id'] = ccode + year + df_agg['cluster'].apply(make_string)
@@ -989,7 +1004,12 @@ def min_max_scale(df):
     # list of columns we don't want to scale
     no_scale_cols = ["CENTROID_ID", "SURVEY_NAME", "COUNTRY", "YEAR",
                     "LATNUM", "LONGNUM", "cluster"]
-    
+
+    # never scale the raw binomial counts (k, n) for the headline poverty
+    # targets — they must reach the model as integer counts, not in [0, 1]
+    count_cols = ['deprived_sev_k', 'deprived_sev_n', 'deprived_mod_k', 'deprived_mod_n']
+    no_scale_cols += [c for c in count_cols if c in df.columns]
+
     # drop these columns so then we scale a subset of the DataFrame
     df_subset = df.drop(no_scale_cols, axis=1)
 

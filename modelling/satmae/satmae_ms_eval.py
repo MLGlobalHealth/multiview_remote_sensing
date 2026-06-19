@@ -229,6 +229,21 @@ def main(args, fold, name, outdir=None, model=None, loaders=None):
         features = np.concatenate(features, 0)
         np.save(os.path.join(outdir, filename), features)
 
+        # Companion CSV in the SAME row order as the .npy (the loader uses
+        # shuffle=False, so row i of the features array is row i of the
+        # dataset's dataframe). This carries CENTROID_ID plus the binomial
+        # counts (deprived_{sev,mod}_{k,n}) so the Bayesian model can join real
+        # cluster sample sizes onto the feature rows instead of inventing them.
+        df = dataloader.dataset.dataframe
+        keep = [c for c in [
+            "CENTROID_ID", "COUNTRY", "YEAR",
+            "deprived_sev", "deprived_sev_k", "deprived_sev_n",
+            "deprived_mod", "deprived_mod_k", "deprived_mod_n",
+        ] if c in df.columns]
+        meta = df[keep].reset_index(drop=True)
+        assert len(meta) == len(features), (len(meta), len(features))
+        meta.to_csv(os.path.join(outdir, filename.replace(".npy", "_meta.csv")), index=False)
+
     # Validation phase
     extract(train_loader, f"train_{name}.npy")
     extract(test_loader, f"test_{name}.npy")
