@@ -35,6 +35,7 @@ out_dir  <- ifelse(length(args) >= 2, args[[2]], "modelling/BLR/output")
 prefix   <- ifelse(length(args) >= 3, args[[3]], "deprived_sev")
 n_iter   <- ifelse(length(args) >= 4, as.integer(args[[4]]), 2000L)
 n_pc     <- ifelse(length(args) >= 5, as.integer(args[[5]]), 100L)
+prior_nm <- ifelse(length(args) >= 6, args[[6]], "hs")  # "hs" | "normal"
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 k_col <- paste0(prefix, "_k")
@@ -87,17 +88,23 @@ k <- as.integer(round(Ytr[[k_col]]))
 n <- as.integer(round(Ytr[[n_col]]))
 k <- pmin(k, n)  # guard against rounding making k > n
 
-# Regularised horseshoe (Piironen & Vehtari 2017). global_scale encodes the prior
-# guess at the number of relevant features p0; rstanarm's hs() is the regularised
-# horseshoe, with slab_scale/slab_df taming the unregularised tails.
-p0 <- max(1, floor(0.05 * D))                     # ~5% of embedding dims relevant
-global_scale <- (p0 / (D - p0)) / sqrt(N)
-prior_coef <- hs(df = 1, global_df = 1, global_scale = global_scale,
-                 slab_df = 4, slab_scale = 2.5)
+# Coefficient prior. "normal" is a weakly-informative Gaussian (ridge-like) that
+# samples in minutes; "hs" is the regularised horseshoe (Piironen & Vehtari 2017),
+# faithful to sparse shrinkage but slow here due to the funnel geometry.
+if (prior_nm == "normal") {
+  prior_coef <- normal(0, 2.5, autoscale = TRUE)
+  cat(sprintf("Prior: normal(0, 2.5) autoscaled\n"))
+} else {
+  p0 <- max(1, floor(0.05 * D))                   # ~5% of components relevant
+  global_scale <- (p0 / (D - p0)) / sqrt(N)
+  prior_coef <- hs(df = 1, global_df = 1, global_scale = global_scale,
+                   slab_df = 4, slab_scale = 2.5)
+  cat(sprintf("Prior: regularised horseshoe, p0=%d, global_scale=%.3g\n", p0, global_scale))
+}
 
 df_tr <- data.frame(k = k, n = n, Xtr, check.names = FALSE)
-cat(sprintf("Fitting binomial hs() model: N=%d clusters, D=%d features, p0=%d, global_scale=%.3g\n",
-            N, D, p0, global_scale))
+cat(sprintf("Fitting binomial model: N=%d clusters, D=%d features, prior=%s\n",
+            N, D, prior_nm))
 
 # In cbind(k, n-k) ~ ., the '.' expands to every column except those named in the
 # response (k, n), i.e. the features only — so n is the trial count, not a predictor.
@@ -107,6 +114,12 @@ fit <- stan_glm(
   family  = binomial(link = "logit"),
   prior   = prior_coef,
   prior_intercept = normal(0, 5),
+  # QR=TRUE orthogonalises the (highly correlated) embedding dimensions internally
+  # for sampling and reports coefficients back on the original scale. Same model,
+  # same features — it just stops NUTS from hitting max tree-depth on the
+  # correlated raw-feature posterior. This is a reparameterisation, NOT PCA/feature
+  # reduction. Most useful with the normal prior; harmless otherwise.
+  QR      = TRUE,
   chains  = 4,
   iter    = n_iter,
   seed    = 1234,
@@ -114,18 +127,34 @@ fit <- stan_glm(
 )
 saveRDS(fit, file.path(out_dir, paste0("fit_binomial_", prefix, ".rds")))
 
-# Posterior predictive on test: expected prevalence (probability scale) per cluster.
+# Expected prevalence (mean probability) per test cluster + its credible interval.
 df_ts <- data.frame(Xts, check.names = FALSE)
 epred <- posterior_epred(fit, newdata = df_ts)   # draws x N_test, in [0,1]
 Yts$pred_prevalence <- apply(epred, 2, median)
-Yts$pred_lower      <- apply(epred, 2, quantile, 0.025)
-Yts$pred_upper      <- apply(epred, 2, quantile, 0.975)
+Yts$mean_lower      <- apply(epred, 2, quantile, 0.025)
+Yts$mean_upper      <- apply(epred, 2, quantile, 0.975)
 obs_prev <- Yts[[k_col]] / Yts[[n_col]]
 Yts$obs_prevalence <- obs_prev
 
+# Posterior PREDICTIVE interval for the OBSERVED prevalence k/n: fold the binomial
+# sampling at each cluster's own n into the draws of the mean probability. This is
+# the interval that should cover k/n ~95% of the time; the mean-probability CI
+# above is far too narrow for that (it omits sampling noise) and is the reason a
+# naive coverage check looks broken. Carrying real n is exactly what makes this
+# possible.
+n_test <- as.integer(Yts[[n_col]])
+ppred <- vapply(seq_len(ncol(epred)),
+                function(j) rbinom(nrow(epred), size = n_test[j], prob = epred[, j]) / n_test[j],
+                numeric(nrow(epred)))
+Yts$pred_lower <- apply(ppred, 2, quantile, 0.025)
+Yts$pred_upper <- apply(ppred, 2, quantile, 0.975)
+
 write_csv(Yts, file.path(out_dir, paste0("Y_test_pred_", prefix, ".csv")))
 
-mae <- mean(abs(Yts$pred_prevalence - obs_prev))
-cover <- mean(obs_prev >= Yts$pred_lower & obs_prev <= Yts$pred_upper)
-cat(sprintf("Test prevalence MAE: %.4f | 95%% CI empirical coverage: %.3f\n", mae, cover))
+mae         <- mean(abs(Yts$pred_prevalence - obs_prev))
+cover_mean  <- mean(obs_prev >= Yts$mean_lower  & obs_prev <= Yts$mean_upper)
+cover_pred  <- mean(obs_prev >= Yts$pred_lower  & obs_prev <= Yts$pred_upper)
+cat(sprintf("Test prevalence MAE: %.4f\n", mae))
+cat(sprintf("95%% coverage of k/n: mean-prob CI %.3f (expected low) | posterior-predictive %.3f (target 0.95)\n",
+            cover_mean, cover_pred))
 cat(sprintf("Wrote predictions and fit to %s\n", out_dir))
