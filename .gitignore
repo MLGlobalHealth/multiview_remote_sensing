@@ -177,3 +177,6 @@ archive/
 *.png
 submit_*
 config*
+.Rproj.user
+.Rhistory
+*.rds
