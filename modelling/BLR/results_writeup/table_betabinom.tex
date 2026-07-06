@@ -1,6 +1,6 @@
 \begin{table}[t]
 \centering
-\caption{Cluster-level child-deprivation prediction from frozen self-supervised satellite embeddings, by 5-fold spatial cross-validation. Each row is a Bayesian beta-binomial regression on the embedding; MAE ($\downarrow$) is the mean absolute error of predicted prevalence and Cov is the empirical coverage of the 95\% posterior-predictive interval for the observed counts $k/n$ (target $0.95$), both fold-averaged. The final row is a plain binomial (no overdispersion term) on the best configuration, showing the calibration failure the beta-binomial corrects. Bands are the channel triplet fed to the encoder.}
+\caption{Cluster-level child-deprivation prediction from frozen self-supervised satellite embeddings (DINOv2 vs.\ DINOv3), by 5-fold spatial cross-validation. Each row is a Bayesian beta-binomial regression on the embedding; MAE ($\downarrow$) is the mean absolute error of predicted prevalence and Cov is the empirical coverage of the 95\% posterior-predictive interval for the observed counts $k/n$ (target $0.95$), fold-averaged. Bands are the channel triplet fed to the encoder. The final row is a plain binomial (no overdispersion) on the best configuration, illustrating the calibration failure the beta-binomial corrects. Best MAE per target in bold.}
 \label{tab:betabinom}
 \begin{tabular}{lll cc cc}
 \toprule
@@ -9,7 +9,14 @@
 Embedding & Imagery & Bands & MAE & Cov & MAE & Cov\\
 \midrule
 DINOv2 & Landsat & 4-3-2 & 0.208 & 0.97 & 0.112 & 0.97\\
+\addlinespace
 DINOv2 & Sentinel & 4-3-2 & \textbf{0.179} & 0.96 & \textbf{0.108} & 0.97\\
+\addlinespace
+DINOv3 & Landsat & 4-3-2 & 0.206 & 0.97 & 0.113 & 0.97\\
+DINOv3 & Landsat & 8-4-2 & 0.213 & 0.97 & 0.114 & 0.97\\
+DINOv3 & Landsat & 11-8-2 & 0.230 & 0.97 & 0.120 & 0.97\\
+DINOv3 & Landsat & 12-1-3 & 0.218 & 0.97 & 0.116 & 0.97\\
+\addlinespace
 DINOv3 & Sentinel & 4-3-2 & 0.190 & 0.96 & 0.115 & 0.96\\
 DINOv3 & Sentinel & 8-4-2 & 0.186 & 0.96 & 0.113 & 0.97\\
 DINOv3 & Sentinel & 11-8-2 & 0.191 & 0.96 & 0.116 & 0.97\\

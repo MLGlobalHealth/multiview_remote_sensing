@@ -5,10 +5,12 @@ master=pd.read_csv('survey_processing/processed_data/dhs_processed.csv')
 M=master[['CENTROID_ID','deprived_sev','deprived_sev_k','deprived_sev_n',
           'deprived_mod','deprived_mod_k','deprived_mod_n']]
 assert M.CENTROID_ID.is_unique, 'master CENTROID_ID not unique'
-dirs=sorted(glob.glob(FEAT+'/spatial_S_fold*_bands*'))
-print('prepping', len(dirs), 'dirs')
+dirs=sorted(glob.glob(FEAT+'/spatial_[LS]_fold*_bands*'))  # both Sentinel and Landsat
+print('found', len(dirs), 'dirs')
 for d in dirs:
     name=os.path.basename(d); o=os.path.join(OUT,name); os.makedirs(o,exist_ok=True)
+    if os.path.exists(f'{o}/X_train.csv') and os.path.exists(f'{o}/y_train.csv'):
+        print('skip',name,'(exists)'); continue
     for sp in ['train','test']:
         X=np.load(f'{d}/X_{sp}.npy')
         meta=pd.read_csv(f'{d}/meta_{sp}.csv')

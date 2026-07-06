@@ -8,7 +8,7 @@ cd /home/scratch/Dropbox/Seth/Research/MLGHrepos/multiview_remote_sensing
 ROOT=modelling/BLR
 maxjobs=3
 mkdir -p "$ROOT/output_bb_v3"
-for d in "$ROOT"/data/v3/spatial_S_fold*_bands*; do
+for d in "$ROOT"/data/v3/spatial_[LS]_fold*_bands*; do
   clean=$(basename "$d")
   for tgt in deprived_sev deprived_mod; do
     out="$ROOT/output_bb_v3/$clean"
